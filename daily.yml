@@ -1,0 +1,67 @@
+name: Daily electricity report
+
+on:
+  schedule:
+    - cron: "30 7 * * *"   # 07:30 UTC every day; DCC data for yesterday is usually in by then
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "Pull this many days of history (first run only)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Fetch, analyse, email
+        env:
+          GLOW_USERNAME: ${{ secrets.GLOW_USERNAME }}
+          GLOW_PASSWORD: ${{ secrets.GLOW_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          SITE_NAME: ${{ vars.SITE_NAME }}
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
+            python run.py --backfill "${{ github.event.inputs.backfill_days }}" --no-email
+          else
+            python run.py
+          fi
+      - name: Commit data and dashboard
+        run: |
+          git config user.name "glow-report bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/readings.csv docs/index.html
+          git diff --cached --quiet || git commit -m "report $(date -u +%F)"
+          git push
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+  deploy:
+    needs: report
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
