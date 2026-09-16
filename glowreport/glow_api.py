@@ -34,24 +34,35 @@ class GlowClient:
                 return res["resourceId"]
         raise RuntimeError(f"No resource with classifier {classifier!r}")
 
-    def readings(self, resource_id: str, start: dt.datetime, end: dt.datetime) -> list[tuple[int, float]]:
-        """Half-hourly kWh readings as (epoch_seconds, kWh). Times are UTC."""
+    def catchup(self, resource_id: str) -> None:
+        """Ask Hildebrand to pull the latest readings from the DCC. Best effort."""
+        try:
+            r = self.s.get(f"{BASE}/resource/{resource_id}/catchup", timeout=30)
+            print("catchup:", r.status_code, r.text[:120])
+        except requests.RequestException as e:
+            print("catchup failed:", e)
+
+    def readings(self, resource_id: str, start_day: dt.date, end_day: dt.date) -> list[tuple[int, float]]:
+        """Half-hourly kWh readings as (epoch_seconds, kWh) for whole local days
+        start_day..end_day inclusive. Missing slots are omitted (nulls=1), never 0."""
         out: list[tuple[int, float]] = []
-        cur = start
-        while cur < end:
-            chunk_end = min(cur + dt.timedelta(days=MAX_DAYS_PER_CALL), end)
+        cur = start_day
+        while cur <= end_day:
+            chunk_end = min(cur + dt.timedelta(days=MAX_DAYS_PER_CALL - 1), end_day)
             params = {
-                "from": cur.strftime("%Y-%m-%dT%H:%M:%S"),
-                "to": chunk_end.strftime("%Y-%m-%dT%H:%M:%S"),
+                "from": f"{cur:%Y-%m-%d}T00:00:00",
+                "to": f"{chunk_end:%Y-%m-%d}T23:59:59",
                 "period": "PT30M",
                 "function": "sum",
                 "offset": 0,
+                "nulls": 1,
             }
             r = self.s.get(f"{BASE}/resource/{resource_id}/readings", params=params, timeout=60)
             r.raise_for_status()
-            for ts, kwh in r.json().get("data", []):
-                if kwh is not None:
-                    out.append((int(ts), float(kwh)))
-            cur = chunk_end
-            time.sleep(0.5)  # be polite
+            data = r.json().get("data", [])
+            got = [(int(ts), float(v)) for ts, v in data if v is not None]
+            print(f"  {cur} to {chunk_end}: {len(data)} slots, {len(got)} with data, {sum(v for _, v in got):.1f} kWh")
+            out.extend(got)
+            cur = chunk_end + dt.timedelta(days=1)
+            time.sleep(0.5)
         return out
