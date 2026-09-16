@@ -2,7 +2,7 @@ name: Daily electricity report
 
 on:
   schedule:
-    - cron: "30 7 * * *"   # 07:30 UTC every day; DCC data for yesterday is usually in by then
+    - cron: "0 13 * * *"   # 07:30 UTC every day; DCC data for yesterday is usually in by then
   workflow_dispatch:
     inputs:
       backfill_days:
