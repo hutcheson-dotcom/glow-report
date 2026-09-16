@@ -24,6 +24,7 @@ import sys
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from glowreport import analyse, render, store
 
@@ -39,15 +40,16 @@ def fetch(s, backfill_days: int | None):
         sys.exit("GLOW_USERNAME / GLOW_PASSWORD not set")
     cli = GlowClient(user, pw)
     rid = cli.find_resource("electricity.consumption")
-    now = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    cli.catchup(rid)
+    today = dt.datetime.now(ZoneInfo(store.TZ)).date()
     if backfill_days:
-        start = now - dt.timedelta(days=backfill_days)
+        start = today - dt.timedelta(days=backfill_days)
     elif len(s):
-        start = (s.index.max().tz_convert("UTC") - dt.timedelta(days=3)).to_pydatetime()  # overlap: DCC data can arrive late
+        start = s.index.max().date() - dt.timedelta(days=7)  # re-check a week: DCC data fills in late
     else:
-        start = now - dt.timedelta(days=30)
-    new = cli.readings(rid, start.replace(tzinfo=None), now.replace(tzinfo=None))
-    print(f"fetched {len(new)} readings from {start:%Y-%m-%d}")
+        start = today - dt.timedelta(days=30)
+    new = cli.readings(rid, start, today)
+    print(f"fetched {len(new)} readings from {start}")
     return store.merge(s, new)
 
 
@@ -73,6 +75,9 @@ def main():
     a = ap.parse_args()
 
     s = store.load(DATA)
+    seed_path = ROOT / "data" / "seed.csv"
+    if a.seed is None and seed_path.exists() and DATA.exists() is False:
+        a.seed = seed_path
     if a.seed:
         seed = store.load(a.seed)
         s = store.merge(s, list(zip(store.to_epoch(seed), seed.values.tolist())))
