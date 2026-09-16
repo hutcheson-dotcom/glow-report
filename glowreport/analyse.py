@@ -99,7 +99,14 @@ def check_alerts(m: pd.Series | None, b: pd.Series | None, day: dt.date, df: pd.
 def build_report(s: pd.Series, day: dt.date | None = None) -> tuple[Report, pd.DataFrame]:
     df = daily_metrics(s)
     if day is None:
-        day = (dt.datetime.now(tz=s.index.tz) - dt.timedelta(days=1)).date() if len(s) else dt.date.today()
+        # Most recent complete day, looking back up to 4 days; DCC data arrives late.
+        yesterday = (dt.datetime.now(tz=s.index.tz) - dt.timedelta(days=1)).date() if len(s) else dt.date.today()
+        day = yesterday
+        for back in range(4):
+            cand = yesterday - dt.timedelta(days=back)
+            if pd.Timestamp(cand) in df.index and df.loc[pd.Timestamp(cand), "complete"]:
+                day = cand
+                break
     m = df.loc[pd.Timestamp(day)] if pd.Timestamp(day) in df.index else None
     b = baseline(df, day)
     rep = Report(day=day, metrics=m, base=b, alerts=check_alerts(m, b, day, df))
