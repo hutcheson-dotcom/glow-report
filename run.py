@@ -39,7 +39,7 @@ def fetch(s, backfill_days: int | None):
     if not (user and pw):
         sys.exit("GLOW_USERNAME / GLOW_PASSWORD not set")
     cli = GlowClient(user, pw)
-    rid = cli.find_resource("electricity.consumption")
+        rid = cli.find_resource("electricity.consumption", os.environ.get("GLOW_RESOURCE"))
     cli.catchup(rid)
     today = dt.datetime.now(ZoneInfo(store.TZ)).date()
     if backfill_days:
