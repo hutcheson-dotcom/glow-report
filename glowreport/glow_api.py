@@ -28,41 +28,41 @@ class GlowClient:
         r.raise_for_status()
         return r.json()
 
-    def find_resource(self, classifier: str = "electricity.consumption") -> str:
-        for res in self.resources():
-            if res.get("classifier") == classifier:
-                return res["resourceId"]
-        raise RuntimeError(f"No resource with classifier {classifier!r}")
+    def entities(self) -> list[dict]:
+        """Virtual entities = properties/meter groups on the account, with their resources."""
+        r = self.s.get(f"{BASE}/virtualentity", timeout=30)
+        r.raise_for_status()
+        return r.json()
 
-    def catchup(self, resource_id: str) -> None:
-        """Ask Hildebrand to pull the latest readings from the DCC. Best effort."""
-        try:
-            r = self.s.get(f"{BASE}/resource/{resource_id}/catchup", timeout=30)
-            print("catchup:", r.status_code, r.text[:120])
-        except requests.RequestException as e:
-            print("catchup failed:", e)
-
-    def readings(self, resource_id: str, start_day: dt.date, end_day: dt.date) -> list[tuple[int, float]]:
-        """Half-hourly kWh readings as (epoch_seconds, kWh) for whole local days
-        start_day..end_day inclusive. Missing slots are omitted (nulls=1), never 0."""
-        out: list[tuple[int, float]] = []
-        cur = start_day
-        while cur <= end_day:
-            chunk_end = min(cur + dt.timedelta(days=MAX_DAYS_PER_CALL - 1), end_day)
-            params = {
-                "from": f"{cur:%Y-%m-%d}T00:00:00",
-                "to": f"{chunk_end:%Y-%m-%d}T23:59:59",
-                "period": "PT30M",
-                "function": "sum",
-                "offset": 0,
-                "nulls": 1,
-            }
-            r = self.s.get(f"{BASE}/resource/{resource_id}/readings", params=params, timeout=60)
-            r.raise_for_status()
-            data = r.json().get("data", [])
-            got = [(int(ts), float(v)) for ts, v in data if v is not None]
-            print(f"  {cur} to {chunk_end}: {len(data)} slots, {len(got)} with data, {sum(v for _, v in got):.1f} kWh")
-            out.extend(got)
-            cur = chunk_end + dt.timedelta(days=1)
-            time.sleep(0.5)
+    def list_meters(self, classifier: str = "electricity.consumption") -> list[dict]:
+        """Every matching resource on the account, with the property it belongs to."""
+        out = []
+        for ve in self.entities():
+            for res in ve.get("resources", []):
+                if res.get("classifier", "") == classifier or classifier in res.get("name", "").replace(" ", "."):
+                    out.append({"property": ve.get("name", "?"), "veId": ve.get("veId"),
+                                "name": res.get("name"), "resourceId": res["resourceId"]})
+        if not out:  # fall back to the flat resource list
+            out = [{"property": "?", "name": r.get("name"), "resourceId": r["resourceId"]}
+                   for r in self.resources() if r.get("classifier") == classifier]
         return out
+
+    def find_resource(self, classifier: str = "electricity.consumption", wanted: str | None = None) -> str:
+        """Pick a resource. `wanted` is a resource ID or a case-insensitive fragment of the property name."""
+        meters = self.list_meters(classifier)
+        print(f"{len(meters)} {classifier} meter(s) on this account:")
+        for m in meters:
+            print(f"  property={m['property']!r}  resourceId={m['resourceId']}")
+        if not meters:
+            raise RuntimeError(f"No resource with classifier {classifier!r}")
+        if wanted:
+            w = wanted.strip().lower()
+            for m in meters:
+                if m["resourceId"].lower() == w or w in str(m["property"]).lower():
+                    print(f"using {m['property']!r} ({m['resourceId']})")
+                    return m["resourceId"]
+            raise RuntimeError(f"GLOW_RESOURCE {wanted!r} did not match any meter above")
+        if len(meters) > 1:
+            raise RuntimeError("More than one electricity meter on this account. Set the GLOW_RESOURCE variable "
+                               "to the property name or resourceId from the list above.")
+        return
