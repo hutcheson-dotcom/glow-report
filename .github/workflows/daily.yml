@@ -41,6 +41,7 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
           SITE_NAME: ${{ vars.SITE_NAME }}
+          GLOW_RESOURCE: ${{ vars.GLOW_RESOURCE }}
         run: |
           if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
             python run.py --backfill "${{ github.event.inputs.backfill_days }}" --no-email
